@@ -8,6 +8,7 @@
 A tiger (or your dog, your logo, your face) that reveals itself when you open a
 shell or start Claude Code, Codex or Gemini CLI.
 
+[![PyPI](https://img.shields.io/pypi/v/terminal-tiger?color=ff8c1e)](https://pypi.org/project/terminal-tiger/)
 [![CI](https://github.com/joshogden360/terminal-tiger/actions/workflows/ci.yml/badge.svg)](https://github.com/joshogden360/terminal-tiger/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-ff8c1e)](https://github.com/joshogden360/terminal-tiger/blob/main/LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-3fa9ff)](https://github.com/joshogden360/terminal-tiger/blob/main/pyproject.toml)
@@ -25,13 +26,13 @@ shell or start Claude Code, Codex or Gemini CLI.
 Try it without installing anything (needs [uv](https://docs.astral.sh/uv/)):
 
 ```sh
-uv run https://raw.githubusercontent.com/joshogden360/terminal-tiger/main/terminal_tiger.py
+uvx terminal-tiger
 ```
 
 Install it and set it up:
 
 ```sh
-uv tool install git+https://github.com/joshogden360/terminal-tiger
+uv tool install terminal-tiger
 tiger --install-shell --wrap
 ```
 
@@ -40,7 +41,7 @@ opens. `--wrap` also plays it every time you start `claude`, `codex` or
 `gemini`. Both live in one marked block in your `~/.zshrc`, `~/.bashrc` or fish
 config (whichever shell you use). Delete the block to undo.
 
-No uv? Use `pipx install git+https://github.com/joshogden360/terminal-tiger`.
+No uv? Use `pipx install terminal-tiger`.
 The first run downloads the tiger photo into `~/.cache/terminal-tiger/`. After
 that it works offline.
 
@@ -214,7 +215,10 @@ uv run pytest            # tests: config, dithering, reveal timing, rendering, s
 
 The CLI is a single, dependency-light file
 ([`terminal_tiger.py`](https://github.com/joshogden360/terminal-tiger/blob/main/terminal_tiger.py)) with inline
-[PEP 723](https://peps.python.org/pep-0723/) metadata, and its source is
+[PEP 723](https://peps.python.org/pep-0723/) metadata, so it even runs
+straight from GitHub with nothing installed:
+`uv run https://raw.githubusercontent.com/joshogden360/terminal-tiger/main/terminal_tiger.py`.
+Its source is
 **ASCII-only** on purpose, so it can be pasted or typed into any terminal, even
 through a browser. See [CONTRIBUTING.md](https://github.com/joshogden360/terminal-tiger/blob/main/CONTRIBUTING.md).
 

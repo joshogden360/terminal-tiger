@@ -255,7 +255,7 @@ footer { margin-top: 44px; padding-top: 18px; border-top: 1px solid var(--line);
     <h1>Give your terminal <span class="amber">a tiger.</span></h1>
     <p>An open-source CLI that turns any photo into an animated, 24-bit color portrait. It greets you when you open a shell, and every time you start Claude Code, Codex or Gemini CLI.</p>
     <div class="quick">
-      <div class="code"><code>uv tool install git+https://github.com/joshogden360/terminal-tiger && tiger --install-shell --wrap</code><button class="copy" type="button">Copy</button></div>
+      <div class="code"><code>uv tool install terminal-tiger && tiger --install-shell --wrap</code><button class="copy" type="button">Copy</button></div>
       <p class="note">Paste it in a terminal, then open a new one. Needs <a href="https://docs.astral.sh/uv/">uv</a>. <a href="#start">Other ways in</a></p>
     </div>
   </div>
@@ -327,12 +327,12 @@ footer { margin-top: 44px; padding-top: 18px; border-top: 1px solid var(--line);
       <div class="step">
         <h3>1. Try it, nothing to install</h3>
         <p>Needs <a href="https://docs.astral.sh/uv/">uv</a>. The first run caches the photo. After that it works offline.</p>
-        <div class="code"><code>uv run https://raw.githubusercontent.com/joshogden360/terminal-tiger/main/terminal_tiger.py</code><button class="copy" type="button">Copy</button></div>
+        <div class="code"><code>uvx terminal-tiger</code><button class="copy" type="button">Copy</button></div>
       </div>
       <div class="step">
         <h3>2. Install the command</h3>
-        <p>Gives you <code>tiger</code> (and <code>terminal-tiger</code>). No uv? Swap in <code>pipx install</code>.</p>
-        <div class="code"><code>uv tool install git+https://github.com/joshogden360/terminal-tiger</code><button class="copy" type="button">Copy</button></div>
+        <p>Gives you <code>tiger</code> (and <code>terminal-tiger</code>). No uv? <code>pipx install terminal-tiger</code>.</p>
+        <div class="code"><code>uv tool install terminal-tiger</code><button class="copy" type="button">Copy</button></div>
       </div>
       <div class="step">
         <h3>3. Set it up</h3>
