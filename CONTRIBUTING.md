@@ -1,0 +1,31 @@
+# Contributing
+
+Thanks for wanting to make terminals prettier.
+
+## Ground rules
+
+- **One file.** The CLI lives in `terminal_tiger.py` and runs with
+  `uv run terminal_tiger.py`. Keep it that way.
+- **ASCII-only source.** Use `chr(0x2580)`, not the literal character. This
+  lets people paste or type the script into any terminal, including browser
+  terminals that drop non-ASCII input. A test enforces it.
+- **Light dependencies.** Pillow and NumPy only (plus `tomli` on old Pythons).
+- **Credit images.** Every preset that points at a photo needs a `credit`
+  string with the author and license.
+
+## Dev loop
+
+```sh
+uv run pytest                                     # tests
+uv run terminal_tiger.py --reveal scan            # try it
+uv run tools/make_demo.py /tmp/x.gif -- --no-anim # record it headless
+```
+
+## Ideas welcome
+
+- New reveal styles (`plan_reveal` returns a start time per cell, so a new
+  style is only a few lines)
+- An idle animation after the reveal (a slow blink, breathing glow)
+- Background auto-detection (OSC 11) so `--bg` isn't needed
+- More presets made from CC0 or CC BY photos
+- Windows console support

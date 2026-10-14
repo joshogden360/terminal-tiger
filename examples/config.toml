@@ -1,0 +1,36 @@
+# terminal-tiger config
+# Copy to ~/.config/terminal-tiger/config.toml and make it yours.
+# Settings are applied in this order, each overriding the last:
+#   built-in defaults -> built-in preset -> [style] -> [presets.NAME] -> CLI flags
+
+# What `terminal-tiger` shows when run with no arguments.
+preset = "tiger"
+
+# Applies to every preset.
+[style]
+bg = "#1d1f21"                      # match your terminal background
+subtitle = "welcome back, {user}"   # tokens: {user} {host} {date} {time} {cwd}
+# reveal = "ripple"                 # ripple | iris | scan | dissolve | none
+# duration = 1.6
+# mode = "auto"                     # auto | true | direct | 256
+
+# Tweak the built-in tiger.
+[presets.tiger]
+title = "tiger"
+accent = "#ff8c1e"
+
+# Your own portrait. Run: terminal-tiger cookie
+[presets.cookie]
+image = "~/Pictures/cookie.jpg"
+crop = [0.10, 0.00, 0.90, 0.85]          # left, top, right, bottom (fractions)
+eyes = [[0.40, 0.42], [0.60, 0.42]]      # fractions of the cropped image
+title = "cookie"
+accent = "#ffd166"
+
+# A logo with a cool-blue iris reveal and no vignette.
+[presets.logo]
+image = "https://example.com/logo.png"
+title = "ship it"
+reveal = "iris"
+accent = "#3fa9ff"
+vignette = 0

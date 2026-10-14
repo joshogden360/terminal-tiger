@@ -1,0 +1,23 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ["3.9", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Tests
+        run: uv run --python ${{ matrix.python }} pytest -q
+      - name: CLI smoke test (piped output, no network)
+        run: |
+          uv run --python ${{ matrix.python }} terminal-tiger --version
+          uv run --python ${{ matrix.python }} terminal-tiger --credits
