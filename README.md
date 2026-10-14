@@ -145,7 +145,8 @@ Run `tiger --list` to see your presets.
   so one pasted into a gist or your dotfiles works on any machine.
 - **A GIF.** [`tools/make_demo.py`](#record-your-own-demo) records the real CLI
   to a GIF, headless.
-- **The showcase.** Made something great? Open a PR that adds it below.
+- **Show and tell.** Made something great? Post a screenshot or GIF in
+  [Show and tell](https://github.com/joshogden360/terminal-tiger/discussions/categories/show-and-tell), or open a PR that adds it to the showcase below.
 
 ### Showcase
 

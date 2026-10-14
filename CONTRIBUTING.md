@@ -23,6 +23,8 @@ uv run tools/make_demo.py /tmp/x.gif -- --no-anim # record it headless
 
 ## Ideas welcome
 
+Start a thread in [Discussions → Ideas](https://github.com/joshogden360/terminal-tiger/discussions/categories/ideas), or pick one of these:
+
 - New reveal styles (`plan_reveal` returns a start time per cell, so a new
   style is only a few lines)
 - An idle animation after the reveal (a slow blink, breathing glow)
