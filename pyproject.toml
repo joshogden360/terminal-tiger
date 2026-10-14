@@ -4,14 +4,15 @@ build-backend = "hatchling.build"
 
 [project]
 name = "terminal-tiger"
-version = "0.1.0"
-description = "Photographic, animated ANSI portraits for your terminal. Built at Google for Startups LA Tech Week 2026."
+dynamic = ["version"]
+description = "Photographic, animated portraits for your terminal and your AI coding agents (Claude Code, Codex, Gemini CLI)."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE", "CREDITS.md"]
 requires-python = ">=3.9"
 authors = [{ name = "Josh Ogden" }]
-keywords = ["terminal", "ansi", "cli", "truecolor", "ascii-art", "motd", "shell", "tiger"]
+keywords = ["terminal", "ansi", "cli", "truecolor", "ascii-art", "motd", "shell", "tiger",
+            "claude-code", "codex", "gemini-cli"]
 classifiers = [
   "Environment :: Console",
   "Intended Audience :: Developers",
@@ -28,7 +29,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/joshogden360/terminal-tiger"
+Homepage = "https://joshogden360.github.io/terminal-tiger/"
+Source = "https://github.com/joshogden360/terminal-tiger"
 Issues = "https://github.com/joshogden360/terminal-tiger/issues"
 
 [project.scripts]
@@ -37,6 +39,9 @@ tiger = "terminal_tiger:main"
 
 [dependency-groups]
 dev = ["pytest>=7", "pyte>=0.8"]
+
+[tool.hatch.version]
+path = "terminal_tiger.py"
 
 [tool.hatch.build.targets.wheel]
 only-include = ["terminal_tiger.py"]

@@ -1,0 +1,25 @@
+name: release
+
+# Publishing a GitHub release uploads that version to PyPI.
+# One-time setup on pypi.org: add a "pending publisher" (trusted publishing)
+# for project terminal-tiger, repo joshogden360/terminal-tiger,
+# workflow release.yml, environment pypi. No API tokens needed.
+on:
+  release:
+    types: [published]
+
+jobs:
+  pypi:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Tests
+        run: uv run pytest -q
+      - name: Build
+        run: uv build
+      - name: Publish
+        run: uv publish --trusted-publishing always

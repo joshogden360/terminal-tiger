@@ -8,11 +8,17 @@ preset = "tiger"
 
 # Applies to every preset.
 [style]
-bg = "#1d1f21"                      # match your terminal background
+# bg = "#1d1f21"                    # detected from your terminal; set it if yours won't say
 subtitle = "welcome back, {user}"   # tokens: {user} {host} {date} {time} {cwd}
 # reveal = "ripple"                 # ripple | iris | scan | dissolve | none
 # duration = 1.6
 # mode = "auto"                     # auto | true | direct | 256
+
+# Before an AI agent starts (terminal-tiger --install-shell zsh --wrap).
+[greet]
+speed = 2                           # animation tempo
+# preset = "cookie"                 # show a different portrait
+# once_a_day = true                 # only the first launch of each agent per day
 
 # Tweak the built-in tiger.
 [presets.tiger]

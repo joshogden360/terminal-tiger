@@ -26,6 +26,7 @@ uv run tools/make_demo.py /tmp/x.gif -- --no-anim # record it headless
 - New reveal styles (`plan_reveal` returns a start time per cell, so a new
   style is only a few lines)
 - An idle animation after the reveal (a slow blink, breathing glow)
-- Background auto-detection (OSC 11) so `--bg` isn't needed
+- Launchers or pets for more AI agents and terminals
+- A `--gif` flag that records the reveal without a virtual terminal
 - More presets made from CC0 or CC BY photos
 - Windows console support

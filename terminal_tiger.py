@@ -39,7 +39,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 REPO = "https://github.com/joshogden360/terminal-tiger"
 EVENT = "Built at Google for Startups - Los Angeles Tech Week 2026"
 
@@ -58,7 +58,8 @@ DEFAULTS = {
     "subtitle": "",         # supports {user} {host} {date} {time} {cwd}
     "accent": "#ff8c1e",    # color of the reveal flash and the title
     "title_color": None,    # defaults to accent
-    "bg": "#202124",        # your terminal background, for the vignette fade
+    "bg": "auto",           # your terminal background, for the vignette fade
+                            # (auto = ask the terminal, else FALLBACK_BG)
     "vignette": 1.4,        # edge softness; 0 turns the vignette off
     "saturation": 1.15,
     "contrast": 1.0,
@@ -67,6 +68,7 @@ DEFAULTS = {
     "max_height": 0,        # rows; 0 = fit the terminal
     "reveal": "ripple",     # ripple | iris | scan | dissolve | none
     "duration": 1.6,        # seconds for the reveal wave to cross the image
+    "speed": 1.0,           # tempo of the whole animation; 2 = twice as fast
     "mode": "auto",         # auto | true | direct | 256
     "credit": "",
 }
@@ -85,6 +87,8 @@ PRESETS = {
     },
 }
 
+FALLBACK_BG = "#202124"
+SHELLS = ("bash", "zsh", "fish")
 REVEALS = ("ripple", "iris", "scan", "dissolve", "none")
 MODES = ("auto", "true", "direct", "256")
 
@@ -204,6 +208,54 @@ def tmux_version():
         return None
 
 
+def parse_osc_color(reply: bytes):
+    """'#rrggbb' from a terminal's OSC 11 reply (rgb:RRRR/GGGG/BBBB), else None."""
+    m = re.search(rb"\]11;rgba?:([0-9a-fA-F]{1,4})/([0-9a-fA-F]{1,4})/([0-9a-fA-F]{1,4})", reply)
+    if not m:
+        return None
+    return "#" + "".join(f"{int(h, 16) * 255 // (16 ** len(h) - 1):02x}" for h in m.groups())
+
+
+def query_background(timeout: float = 0.25):
+    """Ask the terminal for its background color (OSC 11), or None.
+
+    A device-attributes query (DA1) goes out right behind it. Every terminal
+    answers DA1, so its reply marks the end: no waiting out the timeout on
+    terminals that ignore OSC 11, and no late reply leaking into your prompt.
+    """
+    if os.name != "posix" or not (sys.stdin.isatty() and sys.stdout.isatty()):
+        return None
+    import select
+    import termios
+    import tty
+    fd = sys.stdin.fileno()
+    try:
+        old = termios.tcgetattr(fd)
+    except termios.error:
+        return None
+    reply = b""
+    try:
+        tty.setcbreak(fd)
+        sys.stdout.flush()
+        os.write(sys.stdout.fileno(), b"\x1b]11;?\x1b\\\x1b[c")
+        end = time.time() + timeout
+        while not re.search(rb"\x1b\[\?[0-9;]*c", reply):
+            left = end - time.time()
+            if left <= 0 or not select.select([fd], [], [], left)[0]:
+                break
+            reply += os.read(fd, 1024)
+    except OSError:
+        pass
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+    return parse_osc_color(reply)
+
+
+def detect_shell():
+    name = Path(os.environ.get("SHELL", "")).name
+    return name if name in SHELLS else None
+
+
 def detect_mode() -> str:
     if os.environ.get("TMUX"):
         v = tmux_version()
@@ -231,12 +283,10 @@ def detect_mode() -> str:
 # Image pipeline
 # ----------------------------------------------------------------------------
 
-def prepare(cfg: dict, term_cols: int, term_rows: int, title_lines: int):
-    """Return (px, mask, rows, cols): px is float (rows*2, cols, 3)."""
-    import numpy as np
-    from PIL import Image, ImageEnhance, ImageFilter, ImageOps
+def load_photo(cfg: dict):
+    """The cropped, tone-corrected photo as a PIL RGB image."""
+    from PIL import Image, ImageEnhance, ImageOps
 
-    resample = getattr(Image, "Resampling", Image).LANCZOS
     im = Image.open(fetch(cfg["image"]))
     im = ImageOps.exif_transpose(im).convert("RGB")
     W, H = im.size
@@ -245,8 +295,26 @@ def prepare(cfg: dict, term_cols: int, term_rows: int, title_lines: int):
     im = ImageOps.autocontrast(im, cutoff=1, preserve_tone=True)
     if float(cfg["contrast"]) != 1.0:
         im = ImageEnhance.Contrast(im).enhance(float(cfg["contrast"]))
-    im = ImageEnhance.Color(im).enhance(float(cfg["saturation"]))
+    return ImageEnhance.Color(im).enhance(float(cfg["saturation"]))
 
+
+def vignette_mask(h: int, w: int, vig: float):
+    """1 in the middle, fading to 0 toward the edges; all ones when vig is 0."""
+    import numpy as np
+    if vig <= 0:
+        return np.ones((h, w))
+    yy, xx = np.mgrid[0:h, 0:w]
+    d = np.sqrt(((xx - w / 2 + 0.5) / (w / 2)) ** 2 + ((yy - h / 2 + 0.5) / (h / 2)) ** 2)
+    return np.clip((1.12 - d) / (0.3 * vig), 0, 1)
+
+
+def prepare(cfg: dict, term_cols: int, term_rows: int, title_lines: int):
+    """Return (px, mask, rows, cols): px is float (rows*2, cols, 3)."""
+    import numpy as np
+    from PIL import Image, ImageFilter
+
+    resample = getattr(Image, "Resampling", Image).LANCZOS
+    im = load_photo(cfg)
     w, h = im.size
     max_cols = max(8, term_cols - 2)
     cols = min(int(cfg["width"]) or max_cols, max_cols)
@@ -262,15 +330,7 @@ def prepare(cfg: dict, term_cols: int, term_rows: int, title_lines: int):
     if float(cfg["sharpen"]) > 0:
         im = im.filter(ImageFilter.UnsharpMask(1.2, int(70 * float(cfg["sharpen"])), 3))
     px = np.asarray(im, dtype=float)
-
-    vig = float(cfg["vignette"])
-    if vig > 0:
-        yy, xx = np.mgrid[0:rows * 2, 0:cols]
-        d = np.sqrt(((xx - cols / 2 + 0.5) / (cols / 2)) ** 2
-                    + ((yy - rows + 0.5) / rows) ** 2)
-        mask = np.clip((1.12 - d) / (0.3 * vig), 0, 1)
-    else:
-        mask = np.ones((rows * 2, cols))
+    mask = vignette_mask(rows * 2, cols, float(cfg["vignette"]))
     bg = np.array(hex_rgb(cfg["bg"]), dtype=float)
     px = px * mask[..., None] + bg * (1 - mask[..., None])
     return px, mask, rows, cols
@@ -458,6 +518,8 @@ def render(cfg: dict, animate: bool = True, out_is_tty: bool = True, seed: int =
     subtitle = fill_template(cfg.get("subtitle") or "")
     title_lines = (1 if title else 0) + (1 if subtitle else 0)
 
+    if str(cfg["bg"]).lower() == "auto":
+        cfg = {**cfg, "bg": (query_background() if out_is_tty else None) or FALLBACK_BG}
     mode = cfg["mode"] if cfg["mode"] != "auto" else detect_mode()
     if mode == "direct" and not os.environ.get("TMUX"):
         mode = "true"
@@ -499,6 +561,7 @@ def render(cfg: dict, animate: bool = True, out_is_tty: bool = True, seed: int =
 
     canvas = Canvas(mode, rows + title_lines)
     reveal = cfg["reveal"] if animate else "none"
+    speed = max(0.1, float(cfg.get("speed") or 1.0))
     eyes = [(float(x) * cols, float(y) * rows * 2) for x, y in (cfg.get("eyes") or [])]
     eye = np.zeros((rows, cols), bool)
 
@@ -522,7 +585,7 @@ def render(cfg: dict, animate: bool = True, out_is_tty: bool = True, seed: int =
 
             start = time.time()
             while True:
-                t = time.time() - start
+                t = (time.time() - start) * speed
                 qn = np.round(np.clip((t - t0) / fade, 0, 1) * steps).astype(int)
                 ch = np.argwhere((qn != state) & live)
                 if len(ch):
@@ -552,7 +615,7 @@ def render(cfg: dict, animate: bool = True, out_is_tty: bool = True, seed: int =
                     if mode == "256":
                         a, b = nearest256(a), nearest256(b)
                     paint(canvas, c0, ei, cell_codes(mode, a, b))
-                    time.sleep(1 / 30)
+                    time.sleep(1 / 30 / speed)
                 paint(canvas, c0, ei, final_codes(ei))
     except KeyboardInterrupt:  # Ctrl-C skips straight to the finished portrait
         ix = np.argwhere(live)
@@ -567,7 +630,7 @@ def render(cfg: dict, animate: bool = True, out_is_tty: bool = True, seed: int =
             if animate:
                 for i in range(1, len(title_txt) + 1):
                     canvas.write(canvas.goto(row, x0) + color + title_txt[:i] + f"{ESC}[0m")
-                    time.sleep(0.045)
+                    time.sleep(0.045 / speed)
             else:
                 canvas.write(canvas.goto(row, x0) + color + title_txt + f"{ESC}[0m")
             row += 1
@@ -586,14 +649,49 @@ MARK = "# >>> terminal-tiger >>>"
 MARK_END = "# <<< terminal-tiger <<<"
 
 
-def shell_snippet(shell: str) -> str:
+AGENTS = ("claude", "codex", "gemini")
+
+# Arguments that run an agent CLI headless: there is no TUI to greet, and the
+# output may be read by a script, so the portrait stays out of the way.
+HEADLESS_FLAGS = {"-h", "--help", "-v", "-V", "--version"}
+HEADLESS = {
+    "claude": ({"-p", "--print"},
+               {"agents", "auth", "auto-mode", "doctor", "gateway", "install", "mcp",
+                "plugin", "project", "setup-token", "ultrareview", "update"}),
+    "codex": (set(),
+              {"exec", "e", "review", "login", "logout", "mcp", "plugin", "mcp-server",
+               "app-server", "remote-control", "app", "completion", "update", "doctor",
+               "sandbox", "debug", "apply", "a", "archive", "unarchive", "cloud",
+               "exec-server", "features", "help"}),
+    "gemini": ({"-p", "--prompt"},
+               {"mcp", "extensions", "extension", "skills", "skill", "hooks", "hook",
+                "gemma"}),
+}
+
+
+def shell_snippet(shell: str, wrap=()) -> str:
+    """The rc-file block: a once-a-day greeting, plus a launcher function for
+    each command in `wrap` that shows the portrait before the command starts."""
+    for cmd in wrap:
+        if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]*", cmd):
+            raise SystemExit(f"terminal-tiger: can't wrap '{cmd}'")
     if shell == "fish":
-        body = ("if status is-interactive; and type -q terminal-tiger\n"
-                "    terminal-tiger --once-a-day\nend")
+        lines = ["if status is-interactive; and type -q terminal-tiger",
+                 "    terminal-tiger --once-a-day"]
+        for cmd in wrap:
+            lines += [f"    function {cmd} --wraps {cmd}",
+                      f"        terminal-tiger --greet {cmd} $argv",
+                      f"        command {cmd} $argv",
+                      "    end"]
+        lines.append("end")
     else:
-        body = ('if [[ $- == *i* ]] && command -v terminal-tiger >/dev/null 2>&1; then\n'
-                "  terminal-tiger --once-a-day\nfi")
-    return f"{MARK}\n{body}\n{MARK_END}\n"
+        lines = ['if [[ $- == *i* ]] && command -v terminal-tiger >/dev/null 2>&1; then',
+                 "  terminal-tiger --once-a-day"]
+        # `function NAME {` rather than `NAME() {` so an alias can't break it
+        lines += [f'  function {cmd} {{ terminal-tiger --greet {cmd} "$@"; command {cmd} "$@"; }}'
+                  for cmd in wrap]
+        lines.append("fi")
+    return MARK + "\n" + "\n".join(lines) + "\n" + MARK_END + "\n"
 
 
 def rc_file(shell: str) -> Path:
@@ -602,20 +700,60 @@ def rc_file(shell: str) -> Path:
             "fish": home / ".config" / "fish" / "config.fish"}[shell]
 
 
-def install_shell(shell: str) -> None:
+def install_shell(shell: str, wrap=()) -> None:
     rc = rc_file(shell)
     rc.parent.mkdir(parents=True, exist_ok=True)
     text = rc.read_text() if rc.exists() else ""
-    if MARK in text:
-        print(f"terminal-tiger is already in {rc}")
+    block = shell_snippet(shell, wrap)
+    start = text.find(MARK)
+    end = text.find(MARK_END, start)
+    if start >= 0 and end >= 0:  # replace the existing block in place
+        end += len(MARK_END) + (text[end + len(MARK_END):].startswith("\n"))
+        if text[start:end] == block:
+            print(f"terminal-tiger is already in {rc}")
+            return
+        rc.write_text(text[:start] + block + text[end:])
+        print(f"Updated terminal-tiger in {rc}. Open a new terminal to see it.")
         return
     with open(rc, "a") as fh:
-        fh.write(("\n" if text and not text.endswith("\n") else "") + "\n" + shell_snippet(shell))
+        fh.write(("\n" if text and not text.endswith("\n") else "") + "\n" + block)
     print(f"Added terminal-tiger to {rc}. Open a new terminal to meet your tiger.")
+    if wrap:
+        print("Launching " + ", ".join(wrap) + " from a new terminal shows it too.")
 
 
-def shown_today() -> bool:
-    stamp = cache_dir() / "last-shown"
+def wants_greeting(cmd: str, args) -> bool:
+    """False when an agent CLI is being run headless (`claude -p`, `codex exec`)."""
+    flags, subcommands = HEADLESS.get(cmd, (set(), set()))
+    if any(a in flags or a in HEADLESS_FLAGS for a in args):
+        return False
+    return not (args and args[0] in subcommands)
+
+
+def greet(argv, conf: dict | None = None) -> int:
+    """Show the portrait before an agent CLI starts its TUI (see --wrap).
+    Always exits 0 and never raises, so it can't stop the agent launching."""
+    cmd, rest = (os.path.basename(argv[0]), argv[1:]) if argv else ("", [])
+    if not (sys.stdin.isatty() and sys.stdout.isatty()) or not wants_greeting(cmd, rest):
+        return 0
+    try:
+        conf = load_config() if conf is None else conf
+        opts = dict(conf.get("greet") or {})
+        if opts.pop("once_a_day", False) and shown_today("greeted-" + cmd):
+            return 0
+        _, term_rows = shutil.get_terminal_size((100, 40))
+        cli = {"speed": 2.0, "max_height": max(8, term_rows // 2)}
+        cli.update({k: v for k, v in opts.items() if k in DEFAULTS})
+        render(resolve(opts.get("preset"), cli, conf))
+    except KeyboardInterrupt:
+        pass
+    except (Exception, SystemExit) as e:
+        warn(f"skipped the greeting ({e})")
+    return 0
+
+
+def shown_today(name: str = "last-shown") -> bool:
+    stamp = cache_dir() / name
     today = _dt.date.today().isoformat()
     try:
         if stamp.read_text().strip() == today:
@@ -631,6 +769,138 @@ def shown_today() -> bool:
 
 
 # ----------------------------------------------------------------------------
+# Codex CLI pet: the portrait as an animated sprite in the Codex TUI
+# ----------------------------------------------------------------------------
+
+# Codex reads pets from $CODEX_HOME/pets/NAME/pet.json + a spritesheet that must
+# be exactly 8 x 9 frames of 192 x 208 px. Each row is one animation, in the
+# order Codex expects when pet.json lists no animations of its own.
+PET_FRAME = (192, 208)
+PET_GRID = (8, 9)
+
+
+def pet_rows() -> list:
+    """Frame recipes (keyword args for pet_frame), one list per spritesheet row."""
+    breath = [0.0, 0.5, 0.8, 0.6, 0.3, 0.0]
+    return [
+        # 0 idle: a slow breath, the eyes glint near the end
+        [dict(scale=1 + 0.015 * b, glow=g) for b, g in zip(breath, [0, 0, 0, .3, .6, .1])],
+        # 1 running-right, 2 running-left: a ring of fire leaves the eyes
+        [dict(ring=k / 7, glow=.4, dx=2) for k in range(8)],
+        [dict(ring=k / 7, glow=.4, dx=-2) for k in range(8)],
+        # 3 waving: a head tilt
+        [dict(angle=a) for a in (-5, 0, 5, 0)],
+        # 4 jumping: a hop
+        [dict(dy=-d) for d in (0, 8, 12, 8, 0)],
+        # 5 failed ("Blocked"): drained of color, head down
+        [dict(sat=.2, gain=.6 + .05 * (k % 2), dy=3) for k in range(8)],
+        # 6 waiting ("Needs input"): the eyes burn brighter and brighter
+        [dict(glow=g) for g in (.2, .5, .9, 1.2, .9, .5)],
+        # 7 running ("Thinking"): the reveal ripple, looping
+        [dict(ring=k / 5, glow=.5) for k in range(6)],
+        # 8 review ("Ready"): a shine sweeps across the face
+        [dict(shine=k / 5, glow=.3) for k in range(6)],
+    ]
+
+
+def pet_base(cfg: dict):
+    """(rgb, alpha, eyes): the photo covering one frame, its vignette as alpha,
+    and the eye positions in frame pixels."""
+    import numpy as np
+    from PIL import Image
+
+    fw, fh = PET_FRAME
+    im = load_photo(cfg)
+    w, h = im.size
+    s = max(fw / w, fh / h)
+    nw, nh = max(fw, round(w * s)), max(fh, round(h * s))
+    im = im.resize((nw, nh), getattr(Image, "Resampling", Image).LANCZOS)
+    ox, oy = (nw - fw) // 2, (nh - fh) // 2
+    rgb = np.asarray(im.crop((ox, oy, ox + fw, oy + fh)), dtype=float)
+    alpha = vignette_mask(fh, fw, float(cfg["vignette"]))
+    eyes = [(float(x) * nw - ox, float(y) * nh - oy) for x, y in (cfg.get("eyes") or [])]
+    return rgb, alpha, eyes
+
+
+def pet_frame(rgb, alpha, eyes, accent, glow=0.0, ring=None, shine=None,
+              sat=1.0, gain=1.0, scale=1.0, angle=0.0, dx=0, dy=0):
+    """One RGBA frame: the portrait lit with the accent color, then moved."""
+    import numpy as np
+    from PIL import Image
+
+    fh, fw = alpha.shape
+    yy, xx = np.mgrid[0:fh, 0:fw]
+    c = rgb
+    if sat != 1.0:
+        gray = c.mean(-1, keepdims=True)
+        c = gray + (c - gray) * sat
+    light = np.zeros((fh, fw))
+    for ex, ey in eyes:
+        light += glow * np.exp(-((xx - ex) ** 2 + (yy - ey) ** 2) / (2 * 7.0 ** 2))
+    if ring is not None:
+        fx, fy = (np.mean(eyes, axis=0) if eyes else (fw / 2, fh / 2))
+        radius = 8 + ring * 0.75 * math.hypot(fw, fh)
+        light += 0.7 * (1 - ring) * np.exp(-((np.hypot(xx - fx, yy - fy) - radius) / 10) ** 2)
+    if shine is not None:
+        u = (xx + yy) / float(fw + fh) * 1.4 - 0.2
+        light += 0.5 * np.exp(-((u - shine) / 0.06) ** 2)
+    c = np.clip(c * gain + np.array(accent, float) * light[..., None], 0, 255)
+    im = Image.fromarray(np.dstack([c, alpha * 255]).astype(np.uint8), "RGBA")
+
+    bicubic = getattr(Image, "Resampling", Image).BICUBIC
+    if angle:
+        im = im.rotate(angle, resample=bicubic, center=(fw / 2, fh * 0.7))
+    if scale != 1.0:
+        sw, sh = round(fw * scale), round(fh * scale)
+        big = im.resize((sw, sh), bicubic)
+        im = Image.new("RGBA", (fw, fh))
+        im.paste(big, ((fw - sw) // 2, (fh - sh) // 2))
+    if dx or dy:
+        moved = Image.new("RGBA", (fw, fh))
+        moved.paste(im, (dx, dy))
+        im = moved
+    return im
+
+
+def codex_home() -> Path:
+    return Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+
+
+def write_codex_pet(cfg: dict, home: Path | None = None) -> Path:
+    """Write pets/NAME/{pet.json, spritesheet} into the Codex home; return the dir."""
+    import json
+    from PIL import Image, features
+
+    fw, fh = PET_FRAME
+    rgb, alpha, eyes = pet_base(cfg)
+    accent = hex_rgb(cfg["accent"])
+    sheet = Image.new("RGBA", (fw * PET_GRID[0], fh * PET_GRID[1]))
+    for r, row in enumerate(pet_rows()):
+        for c, recipe in enumerate(row):
+            sheet.paste(pet_frame(rgb, alpha, eyes, accent, **recipe), (c * fw, r * fh))
+
+    name = re.sub(r"[^a-z0-9_-]+", "-", str(cfg["name"]).lower()).strip("-") or "pet"
+    out = (home or codex_home()) / "pets" / name
+    out.mkdir(parents=True, exist_ok=True)
+    if features.check("webp"):  # what Codex's own pets use
+        sheet_file = "spritesheet.webp"
+        sheet.save(out / sheet_file, quality=90)
+    else:
+        sheet_file = "spritesheet.png"
+        sheet.save(out / sheet_file)
+    title = str(cfg.get("title") or name)
+    manifest = {
+        "id": name,
+        "displayName": title[:1].upper() + title[1:],
+        "description": f"{title} - made with terminal-tiger",
+        "spritesheetPath": sheet_file,
+        "frame": {"width": fw, "height": fh, "columns": PET_GRID[0], "rows": PET_GRID[1]},
+    }
+    (out / "pet.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    return out
+
+
+# ----------------------------------------------------------------------------
 # CLI
 # ----------------------------------------------------------------------------
 
@@ -640,6 +910,12 @@ def _pair(s: str):
         return [float(x), float(y)]
     except ValueError:
         raise argparse.ArgumentTypeError("use X,Y fractions, e.g. 0.39,0.45")
+
+
+def _shell(s: str) -> str:
+    if s not in SHELLS + ("auto",):
+        raise argparse.ArgumentTypeError(f"use one of: {', '.join(SHELLS)}")
+    return s
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -660,7 +936,8 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--subtitle", help="dim line under the title; {user} {host} {date} {time} {cwd}")
     g.add_argument("--accent", help="reveal flash + title color, #rrggbb")
     g.add_argument("--title-color", dest="title_color", help="title color, #rrggbb")
-    g.add_argument("--bg", help="your terminal background color, #rrggbb")
+    g.add_argument("--bg", help="your terminal background color, #rrggbb "
+                                "(default: ask the terminal)")
     g.add_argument("--vignette", type=float, help="edge softness, 0 = off (default 1.4)")
     g.add_argument("--saturation", type=float)
     g.add_argument("--contrast", type=float)
@@ -668,6 +945,7 @@ def build_parser() -> argparse.ArgumentParser:
     g = p.add_argument_group("animation")
     g.add_argument("--reveal", choices=REVEALS, help="reveal style (default ripple)")
     g.add_argument("--duration", type=float, help="seconds for the reveal wave")
+    g.add_argument("--speed", type=float, help="animation tempo, 2 = twice as fast (default 1)")
     g.add_argument("--no-anim", action="store_true", help="draw instantly")
     g.add_argument("--seed", type=int, default=7, help=argparse.SUPPRESS)
     g = p.add_argument_group("terminal")
@@ -677,28 +955,48 @@ def build_parser() -> argparse.ArgumentParser:
     g = p.add_argument_group("setup")
     g.add_argument("--list", action="store_true", help="list presets")
     g.add_argument("--credits", action="store_true", help="show credits and image licenses")
-    g.add_argument("--shell", choices=("bash", "zsh", "fish"),
+    g.add_argument("--shell", choices=SHELLS,
                    help="print the shell-startup snippet")
-    g.add_argument("--install-shell", choices=("bash", "zsh", "fish"), dest="install",
-                   help="add the startup snippet to your shell rc file")
+    g.add_argument("--install-shell", nargs="?", const="auto", type=_shell, metavar="SHELL",
+                   dest="install",
+                   help="add the startup snippet to your shell rc file "
+                        "(default: the shell you use now)")
+    g.add_argument("--wrap", nargs="*", metavar="CMD",
+                   help="with --shell/--install-shell: also show the portrait when these "
+                        f"commands start (default: {' '.join(AGENTS)})")
+    g.add_argument("--greet", nargs=argparse.REMAINDER, metavar="CMD",
+                   help="show the portrait before CMD's TUI starts, unless CMD is "
+                        "running headless (used by --wrap)")
+    g.add_argument("--codex-pet", action="store_true", dest="codex_pet",
+                   help="save the portrait as an animated pet for the Codex CLI")
     g.add_argument("--version", action="version", version=f"terminal-tiger {__version__}")
     return p
 
 
 CLI_KEYS = ("crop", "eyes", "width", "max_height", "title", "subtitle", "accent",
             "title_color", "bg", "vignette", "saturation", "contrast", "sharpen",
-            "reveal", "duration", "mode")
+            "reveal", "duration", "speed", "mode")
 
 
 def main(argv=None) -> int:
+    argv = sys.argv[1:] if argv is None else list(argv)
+    if argv[:1] == ["--greet"]:  # pass the wrapped command's args through untouched
+        return greet(argv[1:])
     args = build_parser().parse_args(argv)
     conf = load_config()
+    wrap = () if args.wrap is None else (args.wrap or AGENTS)
 
+    if args.greet is not None:
+        return greet(args.greet, conf)
     if args.shell:
-        print(shell_snippet(args.shell), end="")
+        print(shell_snippet(args.shell, wrap), end="")
         return 0
     if args.install:
-        install_shell(args.install)
+        shell = detect_shell() if args.install == "auto" else args.install
+        if not shell:
+            warn("couldn't tell which shell you use; add bash, zsh or fish")
+            return 2
+        install_shell(shell, wrap)
         return 0
     if args.list:
         names = list(PRESETS) + [n for n in (conf.get("presets") or {}) if n not in PRESETS]
@@ -721,6 +1019,15 @@ def main(argv=None) -> int:
     cli = {k: getattr(args, k) for k in CLI_KEYS}
     cfg = resolve(args.source, cli, conf)
     try:
+        if args.codex_pet:
+            out = write_codex_pet(cfg)
+            print(f"Saved a Codex pet to {out}\n"
+                  f"Turn it on: pick it in Codex's pet menu, or add this to "
+                  f"{codex_home() / 'config.toml'}:\n\n"
+                  f'  [tui]\n  pet = "custom:{out.name}"\n\n'
+                  "Pets show in terminals with Kitty graphics or Sixel (Ghostty, Kitty, "
+                  "WezTerm, iTerm2 3.6+, Windows Terminal), outside tmux.")
+            return 0
         render(cfg, animate=not args.no_anim, out_is_tty=sys.stdout.isatty(), seed=args.seed)
     except FileNotFoundError as e:
         warn(f"image not found: {e.filename}")

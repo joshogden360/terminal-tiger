@@ -20,11 +20,13 @@ downloads it from Wikimedia Commons on first run and caches it locally.
 
 ### Derived images in this repository
 
-`docs/demo.gif`, `docs/demo.png`, `docs/styles.png` and the cell data embedded
-in `docs/index.html` (the live playground) are terminal renderings of the photo
-above (cropped, color-adjusted, vignetted and converted to
-half-block terminal cells). They are licensed under **CC BY-SA 4.0**, the same
-license as the original. If you reuse them, credit "Shootsalot (Wikimedia
+`docs/demo.gif`, `docs/demo.png`, `docs/styles.png`, `docs/og.png` (the social
+preview card), `docs/pet.webp` (the Codex pet preview) and the cell data embedded
+in `docs/index.html` (the live playground) are renderings of the photo above
+(cropped, color-adjusted, vignetted and converted to half-block terminal cells
+or pet sprites). They are licensed under **CC BY-SA 4.0**, the same
+license as the original. The same goes for a Codex pet you make from
+the `tiger` preset with `--codex-pet`. If you reuse them, credit "Shootsalot (Wikimedia
 Commons) / terminal-tiger" and share alike.
 
 ## Your own images

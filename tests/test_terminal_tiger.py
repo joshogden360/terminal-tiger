@@ -103,9 +103,126 @@ def test_shell_snippets_and_install(tmp_path, monkeypatch):
     for sh in ("bash", "zsh", "fish"):
         snip = tt.shell_snippet(sh)
         assert tt.MARK in snip and "--once-a-day" in snip
+        tt.rc_file(sh).parent.mkdir(parents=True, exist_ok=True)
+        tt.rc_file(sh).write_text("export KEEP=me\n")
         tt.install_shell(sh)
         tt.install_shell(sh)  # idempotent
         assert tt.rc_file(sh).read_text().count(tt.MARK) == 1
+        tt.install_shell(sh, tt.AGENTS)  # re-running with --wrap updates the block
+        text = tt.rc_file(sh).read_text()
+        assert text.count(tt.MARK) == 1 and text.startswith("export KEEP=me\n")
+        assert all(f"--greet {cmd}" in text for cmd in tt.AGENTS)
+    with pytest.raises(SystemExit):
+        tt.shell_snippet("zsh", ["rm -rf /"])
+
+
+@pytest.mark.parametrize("shell", ["bash", "zsh"])
+def test_wrapper_runs_the_real_command(tmp_path, shell):
+    """The launcher greets, then runs the real command with the same args."""
+    import shutil
+    import subprocess
+    if not shutil.which(shell):
+        pytest.skip(f"{shell} not installed")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name, line in (("terminal-tiger", "echo TIGER \"$@\""), ("claude", "echo CLAUDE \"$@\"")):
+        (bin_dir / name).write_text(f"#!/bin/sh\n{line}\n")
+        (bin_dir / name).chmod(0o755)
+    rc = tmp_path / "rc"
+    rc.write_text(tt.shell_snippet(shell, ["claude"]))
+    script = f'source "{rc}"; claude -c "fix the bug"'
+    out = subprocess.run([shell, "-i", "-c", script], capture_output=True, text=True,
+                         env={"PATH": f"{bin_dir}:/usr/bin:/bin", "HOME": str(tmp_path)},
+                         stdin=subprocess.DEVNULL).stdout.splitlines()
+    assert out == ["TIGER --once-a-day", "TIGER --greet claude -c fix the bug",
+                   "CLAUDE -c fix the bug"]
+
+
+def test_parse_osc_color():
+    assert tt.parse_osc_color(b"\x1b]11;rgb:5a5a/5a5a/5a5a\x1b\\\x1b[?62;22c") == "#5a5a5a"
+    assert tt.parse_osc_color(b"\x1b]11;rgb:ff/80/00\x07") == "#ff8000"
+    assert tt.parse_osc_color(b"\x1b[?1;2c") is None  # answered DA1 only
+
+
+@pytest.mark.skipif(os.name != "posix", reason="needs a pty")
+@pytest.mark.parametrize("answers, expected", [
+    ({b"\x1b]11;?": b"\x1b]11;rgb:1d1d/1f1f/2121\x1b\\", b"\x1b[c": b"\x1b[?62;22c"}, "#1d1f21"),
+    ({b"\x1b[c": b"\x1b[?1;2c"}, "None"),  # no OSC 11 support
+    ({}, "None"),                          # answers nothing: times out
+])
+def test_query_background_in_a_pty(answers, expected):
+    """Play the terminal: answer the queries the CLI writes, like a real one would."""
+    import pty
+    import select
+    import subprocess
+    import time
+    m, s = pty.openpty()
+    code = "import terminal_tiger as tt; print(tt.query_background())"
+    p = subprocess.Popen([sys.executable, "-c", code], stdin=s, stdout=s, stderr=s,
+                         cwd=Path(tt.__file__).parent)
+    os.close(s)
+    out, seen, start = b"", b"", time.time()
+    while time.time() - start < 10:
+        if not select.select([m], [], [], 0.05)[0]:
+            if p.poll() is not None:
+                break
+            continue
+        try:
+            chunk = os.read(m, 1024)
+        except OSError:
+            break
+        if not chunk:  # macOS: EOF once the child exits
+            break
+        seen += chunk
+        for query, reply in answers.items():
+            if query in seen:
+                os.write(m, reply)
+                seen = seen.replace(query, b"")
+        out += chunk
+    p.wait()
+    assert time.time() - start < 2
+    # the printed result follows the (unanswered) query bytes on the same line
+    assert out.decode(errors="replace").strip().endswith(expected)
+
+
+def test_wants_greeting():
+    assert tt.wants_greeting("claude", [])
+    assert tt.wants_greeting("claude", ["-c"])
+    assert tt.wants_greeting("claude", ["fix the bug"])
+    assert tt.wants_greeting("codex", ["resume"])
+    assert tt.wants_greeting("codex", ["-p", "work"])  # codex -p is --profile
+    assert not tt.wants_greeting("claude", ["-p", "hi"])
+    assert not tt.wants_greeting("codex", ["exec", "hi"])
+    assert not tt.wants_greeting("gemini", ["--prompt", "hi"])
+    assert not tt.wants_greeting("anything", ["--version"])
+
+
+def test_greet_stays_quiet_without_a_terminal(capsys):
+    # under pytest stdin/stdout are not a tty, like an agent running a command
+    assert tt.main(["--greet", "claude", "--", "-x"]) == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_codex_pet(photo, tmp_path):
+    import json
+    cfg = tt.resolve(str(photo), {"eyes": [[0.38, 0.45], [0.62, 0.45]], "title": "face"}, {})
+    out = tt.write_codex_pet(cfg, home=tmp_path)
+    assert out == tmp_path / "pets" / "face"
+    manifest = json.loads((out / "pet.json").read_text())
+    assert manifest["displayName"] == "Face"
+    fw, fh = tt.PET_FRAME
+    cols, rows = tt.PET_GRID
+    assert manifest["frame"] == {"width": fw, "height": fh, "columns": cols, "rows": rows}
+    sheet = Image.open(out / manifest["spritesheetPath"]).convert("RGBA")
+    assert sheet.size == (fw * cols, fh * rows)  # Codex rejects any other size
+    alpha = np.asarray(sheet)[..., 3]
+    recipes = tt.pet_rows()
+    assert len(recipes) == rows
+    for r in range(rows):
+        for c in range(cols):
+            cell = alpha[r * fh:(r + 1) * fh, c * fw:(c + 1) * fw]
+            assert (cell.max() > 0) == (c < len(recipes[r]))  # every used frame drawn
+            assert cell[0, 0] == 0  # corners fade out to transparent
 
 
 def test_cli_list_and_credits(capsys):
